@@ -1,10 +1,10 @@
 use std::{marker::PhantomData};
 
 use halo2_proofs::{
-    arithmetic::{Field}, 
+    arithmetic::{Field, CurveAffine}, 
     circuit::{Layouter, Chip, Value, AssignedCell, Region, SimpleFloorPlanner}, 
     plonk::{Column, Advice, Error, Instance, Selector, ConstraintSystem, Circuit, Expression, create_proof, keygen_vk}, 
-    poly::{Rotation}, 
+    poly::{Rotation, commitment::Params}, 
     pasta::{Fp}, 
 };
 
@@ -300,20 +300,10 @@ pub fn accumulate_inputs(a: Vec<u64>, b: Vec<u64>) -> Vec<Fp> {
     vec![Fp::from(accumulate)]
 }
 
-// fn main() {
-//     let k = 6;
-//     let a_vec = vec![1,1,0,1,0,1,0,0];
-//     let b_vec = vec![0,1,0,0,0,1,1,0];
-//     let pub_input = accumulate_inputs(a_vec.clone(), b_vec.clone());
-
-//     let circuit = create_circuit(a_vec, b_vec);
-
-//     draw_circuit(k, &circuit);
-
-//     let prover = MockProver::run(k, &circuit, vec![pub_input]).unwrap();
-//     let res = prover.verify();
-//     match res {
-//         Ok(()) => println!("Proof generation OK"),
-//         Err(e) => println!("err {:#?}", e),
-//     }
-// }
+// WIP
+pub fn generate_proof<C: CurveAffine, F: Field>(
+    _params: Params<C>, 
+    _circuit: &HammsterCircuit<F>
+) {
+    println!("WIP");
+}
