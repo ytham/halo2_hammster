@@ -86,7 +86,6 @@ impl<F: Field> HammsterChip<F> {
             vec![s_binary_r * (value.clone() * (Expression::Constant(F::ONE) - value))]
         });
 
-        // TODO: Implement modulus for XOR gate
         meta.create_gate("xor", |meta| {
             let lhs = meta.query_advice(advice[0], Rotation::cur());
             let rhs = meta.query_advice(advice[1], Rotation::cur());
@@ -281,13 +280,6 @@ pub fn create_circuit(a: Vec<u64>, b: Vec<u64>) -> HammsterCircuit<Fp> {
         a: a_vec,
         b: b_vec,
     }
-
-    // // Generate proving and verifying keys
-    // let params = Params
-    // let vk = keygen_vk(&pub_input, &circuit);
-
-    // // Generate the proof
-    // create_proof(params, pk, circuits, instances, rng, transcript)
 }
 
 pub fn accumulate_inputs(a: Vec<u64>, b: Vec<u64>) -> Vec<Fp> {
