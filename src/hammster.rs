@@ -1,15 +1,15 @@
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    time::Instant,
+};
 
 use halo2_proofs::{
-    arithmetic::{CurveAffine, Field},
-    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
-    pasta::{EqAffine, Fp},
-    plonk::{
-        create_proof, keygen_pk, keygen_vk, Advice, Circuit, Column, ConstraintSystem, Error,
-        Expression, Instance, Selector,
-    },
-    poly::{commitment::Params, Rotation},
-    transcript::{Blake2bWrite, Challenge255},
+    arithmetic::Field, 
+    dev::MockProver,
+    circuit::{Layouter, Chip, Value, AssignedCell, Region, SimpleFloorPlanner}, 
+    plonk::{Column, Advice, Instance, Error, Selector, ConstraintSystem, Circuit, Expression, create_proof, keygen_vk, keygen_pk, ProvingKey, VerifyingKey, verify_proof, SingleVerifier}, 
+    poly::{Rotation, commitment::Params}, 
+    pasta::{Fp, EqAffine}, transcript::{Blake2bWrite, Challenge255, Blake2bRead}, 
 };
 use rand_core::OsRng;
 
@@ -18,25 +18,11 @@ const BINARY_LENGTH: usize = 8;
 trait Instructions<F: Field>: Chip<F> {
     type Num;
 
-    fn load_private_and_check_binary(
-        &self,
-        layouter: impl Layouter<F>,
-        column: usize,
-        value: [Value<F>; BINARY_LENGTH],
-    ) -> Result<Vec<Self::Num>, Error>;
+    fn load_private_and_check_binary(&self, layouter: impl Layouter<F>, column: usize, value: [Value<F>; BINARY_LENGTH]) -> Result<Vec<Self::Num>, Error>;
 
-    fn xor(
-        &self,
-        layouter: impl Layouter<F>,
-        a: Self::Num,
-        b: Self::Num,
-    ) -> Result<Self::Num, Error>;
+    fn xor(&self, layouter: impl Layouter<F>, a: Self::Num, b: Self::Num) -> Result<Self::Num, Error>;
 
-    fn accumulator(
-        &self,
-        layouter: impl Layouter<F>,
-        values: [Self::Num; BINARY_LENGTH],
-    ) -> Result<Self::Num, Error>;
+    fn accumulator(&self, layouter: impl Layouter<F>, values: [Self::Num; BINARY_LENGTH]) -> Result<Self::Num, Error>;
 
     fn expose_public(&self, layouter: impl Layouter<F>, num: Self::Num) -> Result<(), Error>;
 }
@@ -71,9 +57,9 @@ pub struct HammsterConfig {
 
 impl<F: Field> HammsterChip<F> {
     fn construct(config: <Self as Chip<F>>::Config) -> Self {
-        Self {
-            config,
-            _marker: PhantomData,
+        Self { 
+            config, 
+            _marker: PhantomData, 
         }
     }
 
@@ -116,9 +102,7 @@ impl<F: Field> HammsterChip<F> {
 
         meta.create_gate("accumulator", |meta| {
             let inputs_sum = (0..BINARY_LENGTH)
-                .map(|i| {
-                    meta.query_advice(advice[2], Rotation((i as i32) - (BINARY_LENGTH as i32)))
-                })
+                .map(|i| meta.query_advice(advice[2], Rotation((i as i32) - (BINARY_LENGTH as i32))))
                 .fold(Expression::Constant(F::ZERO), |acc, e| acc + e);
             let sum = meta.query_advice(advice[2], Rotation::cur());
             let s_accumulator = meta.query_selector(s_accumulator);
@@ -143,63 +127,45 @@ struct Number<F: Field>(AssignedCell<F, F>);
 impl<F: Field> Instructions<F> for HammsterChip<F> {
     type Num = Number<F>;
 
-    fn load_private_and_check_binary(
-        &self,
-        mut layouter: impl Layouter<F>,
-        column: usize,
-        values: [Value<F>; BINARY_LENGTH],
-    ) -> Result<Vec<Self::Num>, Error> {
+    fn load_private_and_check_binary(&self, mut layouter: impl Layouter<F>, column: usize, values: [Value<F>; BINARY_LENGTH]) -> Result<Vec<Self::Num>, Error> {
         let config = self.config();
 
         layouter.assign_region(
-            || "assign private values",
+            || "assign private values", 
             |mut region| {
                 values
                     .iter()
                     .enumerate()
-                    .map(|(i, value)| {
+                    .map(|(i,value)| {
                         if column == 0 {
                             config.s_binary_l.enable(&mut region, i)?;
                         } else {
                             config.s_binary_r.enable(&mut region, i)?;
                         }
                         region
-                            .assign_advice(
-                                || "assign private input",
-                                config.advice[column],
-                                i,
-                                || *value,
-                            )
+                            .assign_advice(|| "assign private input", config.advice[column], i, || *value)
                             .map(Number)
-                    })
+                        }
+                    )
                     .collect()
-            },
+            }
         )
     }
 
-    fn xor(
-        &self,
-        mut layouter: impl Layouter<F>,
-        a: Self::Num,
-        b: Self::Num,
-    ) -> Result<Self::Num, Error> {
+    fn xor(&self, mut layouter: impl Layouter<F>, a: Self::Num, b: Self::Num) -> Result<Self::Num, Error> {
         let config = self.config();
 
         layouter.assign_region(
-            || "assign xor region",
+            || "assign xor region", 
             |mut region: Region<'_, F>| {
                 config.s_xor.enable(&mut region, 0)?;
 
-                let a_val =
-                    a.0.copy_advice(|| "lhs", &mut region, config.advice[0], 0)?;
-                let b_val =
-                    b.0.copy_advice(|| "rhs", &mut region, config.advice[1], 0)?;
+                let a_val = a.0.copy_advice(|| "lhs", &mut region, config.advice[0], 0)?;
+                let b_val = b.0.copy_advice(|| "rhs", &mut region, config.advice[1], 0)?;
 
-                let xor_result =
-                    a_val
-                        .value()
-                        .zip(b_val.value())
-                        .map(|(a, b)| if *a == *b { F::ZERO } else { F::ONE });
+                let xor_result = a_val.value()
+                    .zip(b_val.value())
+                    .map(|(a, b)| if *a == *b { F::ZERO } else { F::ONE });
 
                 region
                     .assign_advice(|| "a xor b", config.advice[2], 0, || xor_result)
@@ -208,25 +174,16 @@ impl<F: Field> Instructions<F> for HammsterChip<F> {
         )
     }
 
-    fn accumulator(
-        &self,
-        mut layouter: impl Layouter<F>,
-        values: [Self::Num; BINARY_LENGTH],
-    ) -> Result<Self::Num, Error> {
+    fn accumulator(&self, mut layouter: impl Layouter<F>, values: [Self::Num; BINARY_LENGTH]) -> Result<Self::Num, Error> {
         let config = self.config();
 
         layouter.assign_region(
-            || "assign accumulator region",
+            || "assign accumulator region", 
             |mut region: Region<'_, F>| {
                 config.s_accumulator.enable(&mut region, BINARY_LENGTH)?;
 
                 for (i, value) in values.iter().enumerate() {
-                    (*value).0.copy_advice(
-                        || format!("output[{}]", i),
-                        &mut region,
-                        config.advice[2],
-                        i,
-                    )?;
+                    (*value).0.copy_advice(|| format!("output[{}]", i), &mut region, config.advice[2], i)?;
                 }
 
                 let accumulation = values
@@ -235,14 +192,9 @@ impl<F: Field> Instructions<F> for HammsterChip<F> {
                     .fold(Value::known(F::ZERO), |acc, e| acc + e);
 
                 region
-                    .assign_advice(
-                        || "accumulation result",
-                        config.advice[2],
-                        BINARY_LENGTH,
-                        || accumulation,
-                    )
+                    .assign_advice(|| "accumulation result", config.advice[2], BINARY_LENGTH, || accumulation)
                     .map(Number)
-            },
+            }
         )
     }
 
@@ -269,52 +221,29 @@ impl<F: Field> Circuit<F> for HammsterCircuit<F> {
     }
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
-        let advice = [
-            meta.advice_column(),
-            meta.advice_column(),
-            meta.advice_column(),
-        ];
+        let advice = [meta.advice_column(), meta.advice_column(), meta.advice_column()];
         let instance = meta.instance_column();
 
         HammsterChip::configure(meta, advice, instance)
     }
 
-    fn synthesize(
-        &self,
-        config: Self::Config,
-        mut layouter: impl Layouter<F>,
-    ) -> Result<(), Error> {
+    fn synthesize(&self, config: Self::Config, mut layouter: impl Layouter<F>) -> Result<(), Error> {
         let hammster_chip = HammsterChip::<F>::construct(config);
 
         // Load private variable vectors & check if they're binary
-        let a = hammster_chip.load_private_and_check_binary(
-            layouter.namespace(|| "load a"),
-            0,
-            self.a,
-        )?;
-        let b = hammster_chip.load_private_and_check_binary(
-            layouter.namespace(|| "load b"),
-            1,
-            self.b,
-        )?;
+        let a = hammster_chip.load_private_and_check_binary(layouter.namespace(|| "load a"), 0, self.a)?;
+        let b = hammster_chip.load_private_and_check_binary(layouter.namespace(|| "load b"), 1, self.b)?;
 
         // Perform XOR on each row
         let xor_results: Vec<Number<F>> = (0..BINARY_LENGTH)
             .map(|i| {
-                hammster_chip
-                    .xor(
-                        layouter.namespace(|| format!("xor[{}]", i)),
-                        a[i].clone(),
-                        b[i].clone(),
-                    )
-                    .unwrap()
+                hammster_chip.xor(layouter.namespace(|| format!("xor[{}]", i)), a[i].clone(), b[i].clone()).unwrap()
             })
             .collect();
         let xor_slice: [Number<F>; 8] = xor_results.clone().try_into().unwrap();
 
         // Accumulate the results of the XOR output column
-        let accumulate = hammster_chip
-            .accumulator(layouter.namespace(|| "accumulate xor results"), xor_slice)?;
+        let accumulate = hammster_chip.accumulator(layouter.namespace(|| "accumulate xor results"), xor_slice)?;
 
         // Ensure the accumulated value equals the public input (of the precalculated accumulation value)
         hammster_chip.expose_public(layouter.namespace(|| "expose accumulate"), accumulate)
@@ -323,7 +252,7 @@ impl<F: Field> Circuit<F> for HammsterCircuit<F> {
 
 pub fn draw_circuit<F: Field>(k: u32, circuit: &HammsterCircuit<F>) {
     use plotters::prelude::*;
-    let base = BitMapBackend::new("layout.png", (1600, 1600)).into_drawing_area();
+    let base = BitMapBackend::new("layout.png", (1600,1600)).into_drawing_area();
     base.fill(&WHITE).unwrap();
     let base = base.titled("Hammster Circuit", ("sans-serif", 24)).unwrap();
 
@@ -352,7 +281,10 @@ pub fn create_circuit(a: Vec<u64>, b: Vec<u64>) -> HammsterCircuit<Fp> {
         .unwrap();
 
     // Create circuit from inputs
-    HammsterCircuit { a: a_vec, b: b_vec }
+    HammsterCircuit {
+        a: a_vec,
+        b: b_vec,
+    }
 }
 
 pub fn accumulate_inputs(a: Vec<u64>, b: Vec<u64>) -> Vec<Fp> {
@@ -365,28 +297,76 @@ pub fn accumulate_inputs(a: Vec<u64>, b: Vec<u64>) -> Vec<Fp> {
     vec![Fp::from(accumulate)]
 }
 
-// WIP
-pub fn generate_proof<F: Field, C: Circuit<Fp>>(
-    params: Params<EqAffine>,
-    circuit: C,
-    instances: Vec<Vec<Fp>>,
-) -> Result<(), Error> {
-    let vk = keygen_vk(&params, &circuit).unwrap();
-    let pk = keygen_pk(&params, vk.clone(), &circuit).unwrap();
+pub fn run_mock_prover(
+    k: u32,
+    circuit: &HammsterCircuit<Fp>,
+    pub_input: &Vec<Fp>,
+) {
+    let prover = MockProver::run(k, circuit, vec![pub_input.clone()]).unwrap();
+    let res = prover.verify();
+    match res {
+        Ok(()) => println!("MockProver OK"),
+        Err(e) => println!("err {:#?}", e),
+    }
+}
 
-    let instance: Vec<&[Fp]> = instances
-        .iter()
-        .map(|instance| instance.as_slice())
-        .collect();
-    let mut instance_slice = &[instance.as_slice()];
+pub fn generate_setup_params(
+    k: u32,
+) -> Params<EqAffine> {
+    // Generate a universal trusted setup of our own for testing
+    Params::<EqAffine>::new(k)
+}
 
+pub fn generate_keys(
+    params: &Params<EqAffine>,
+    circuit: &HammsterCircuit<Fp>,
+) -> (ProvingKey<EqAffine>, VerifyingKey<EqAffine>) {
+    // just to emphasize that for vk, pk we don't need to know the value of `x`
+    let vk = keygen_vk(params, circuit).expect("vk should not fail");
+    let pk = keygen_pk(params, vk.clone(), circuit).expect("pk should not fail");
+    (pk, vk)
+}
+
+pub fn generate_proof(
+    params: &Params<EqAffine>,
+    pk: &ProvingKey<EqAffine>,
+    circuit: HammsterCircuit<Fp>,
+    pub_input: &Vec<Fp>,
+) -> Vec<u8> {
+    println!("Generating proof...");
+    let start = Instant::now();
     let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
-    return create_proof(
-        &params,
-        &pk,
+    create_proof(
+        params, 
+        pk, 
         &[circuit],
-        instance_slice.as_slice(),
-        OsRng,
+        &[&[pub_input]], 
+        OsRng, 
+        &mut transcript
+    ).expect("Prover should not fail");
+    let proof = transcript.finalize();
+    println!("Proving time: {:?}", start.elapsed());
+    
+    proof
+}
+
+pub fn verify(
+    params: &Params<EqAffine>,
+    vk: &VerifyingKey<EqAffine>,
+    pub_input: &Vec<Fp>,
+    proof: Vec<u8>,
+) -> Result<(), Error> {
+    println!("Verifying proof...");
+    let strategy = SingleVerifier::new(&params);
+    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+    let start = Instant::now();
+    let verify_res = verify_proof(
+        params, 
+        vk, 
+        strategy, 
+        &[&[pub_input]], 
         &mut transcript,
     );
+    println!("Verification time: {:?}", start.elapsed());
+    verify_res
 }
