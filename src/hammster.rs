@@ -1,12 +1,14 @@
 use std::{marker::PhantomData};
 
+use halo2_curves::bn256::{Bn256, Fq, Fr, G1Affine};
 use halo2_proofs::{
     arithmetic::{Field, CurveAffine}, 
     circuit::{Layouter, Chip, Value, AssignedCell, Region, SimpleFloorPlanner}, 
-    plonk::{Column, Advice, Error, Instance, Selector, ConstraintSystem, Circuit, Expression, create_proof, keygen_vk}, 
+    plonk::{Column, Advice, Error, Instance, Selector, ConstraintSystem, Circuit, Expression, create_proof, keygen_vk, keygen_pk}, 
     poly::{Rotation, commitment::Params}, 
-    pasta::{Fp}, 
+    pasta::{Fp, EqAffine}, transcript::{Blake2bWrite, Challenge255}, 
 };
+use rand_core::OsRng;
 
 const BINARY_LENGTH: usize = 8;
 
@@ -293,9 +295,27 @@ pub fn accumulate_inputs(a: Vec<u64>, b: Vec<u64>) -> Vec<Fp> {
 }
 
 // WIP
-pub fn generate_proof<C: CurveAffine, F: Field>(
-    _params: Params<C>, 
-    _circuit: &HammsterCircuit<F>
-) {
-    println!("WIP");
+pub fn generate_proof<F: Field, C: Circuit<Fp>>(
+    params: Params<EqAffine>, 
+    circuit: C,
+    instances: Vec<Vec<Fp>>,
+) -> Result<(), Error> {
+    let vk = keygen_vk(&params, &circuit).unwrap();
+    let pk = keygen_pk(&params, vk.clone(), &circuit).unwrap();
+    
+    let instance: Vec<&[Fp]> = instances
+        .iter()
+        .map(|instance| instance.as_slice())
+        .collect();
+    let mut instance_slice = &[instance.as_slice()];
+    
+    let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+    return create_proof(
+        &params, 
+        &pk, 
+        &[circuit], 
+        instance_slice.as_slice(), 
+        OsRng, 
+        &mut transcript
+    );
 }

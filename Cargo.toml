@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 extend = "1.2.0"
 halo2_proofs = { version = "0.3.0", features = ["dev-graph"] }
 plotters = "0.3.4"
+rand_core = "0.6.4"
 serde = "1.0.156"
 serde_json = "1.0.94"
 
